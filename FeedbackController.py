@@ -6,43 +6,7 @@
 """
 
 import sys
-import types
 import time
-
-# Provide compatibility shim for MicroPython C modules when running in desktop environments
-if not hasattr(time, 'ticks_ms'):
-    time.ticks_ms = lambda: int(time.time() * 1000)
-if not hasattr(time, 'ticks_diff'):
-    time.ticks_diff = lambda a, b: a - b
-if not hasattr(time, 'sleep_ms'):
-    time.sleep_ms = lambda ms: time.sleep(ms / 1000.0)
-if not hasattr(time, 'sleep_us'):
-    time.sleep_us = lambda us: time.sleep(us / 1000000.0)
-
-if 'utime' not in sys.modules:
-    _utime = types.ModuleType('utime')
-    _utime.ticks_ms = time.ticks_ms
-    _utime.ticks_diff = time.ticks_diff
-    _utime.sleep = time.sleep
-    _utime.sleep_ms = time.sleep_ms
-    _utime.sleep_us = time.sleep_us
-    sys.modules['utime'] = _utime
-
-if 'machine' not in sys.modules:
-    _machine = types.ModuleType('machine')
-    _machine.Pin = lambda *a, **kw: None
-    _machine.ADC = lambda *a, **kw: None
-    _machine.Timer = lambda *a, **kw: None
-    _machine.RTC = lambda *a, **kw: None
-    _machine.PWM = lambda *a, **kw: None
-    _machine.I2C = lambda *a, **kw: None
-    _machine.SPI = lambda *a, **kw: None
-    sys.modules['machine'] = _machine
-
-if 'micropython' not in sys.modules:
-    _micropython = types.ModuleType('micropython')
-    _micropython.schedule = lambda f, a: f(a)
-    sys.modules['micropython'] = _micropython
 
 from Log import *
 from StateModel import StateModel
@@ -57,7 +21,8 @@ try:
     from Button import Button
     from Sensors_advanced import UltrasonicSensor
     HARDWARE_AVAILABLE = True
-except (ImportError, ModuleNotFoundError, Exception):
+except Exception as e:
+    print("HARDWARE IMPORT ERROR:", e)
     HARDWARE_AVAILABLE = False
     LCDDisplay = None
     PassiveBuzzer = None
@@ -125,13 +90,13 @@ class SimLightStrip:
         self.cur_level = 0
         Log.d("SimLightStrip: Lights OFF")
 
-D    def on(self):
+    def on(self):
         self.cur_level = self._numleds
         Log.d("SimLightStrip: Lights ON")
 
 
 class SimButton:
-self._model.addTransition(    """Simulation fallback for push button."""
+    """Simulation fallback for push button."""
 
     def __init__(self, pin=0, name="button", handler=None):
         self._pinNo = pin
@@ -274,7 +239,7 @@ class FeedbackController:
         if buzzer is not None:
             self.buzzer = buzzer
         elif HARDWARE_AVAILABLE and PassiveBuzzer is not None:
-            self.buzzer = PassiveBuzzer(pin=15, name="buzzer")
+            self.buzzer = PassiveBuzzer(pin=16, name="buzzer")
         else:
             self.buzzer = SimBuzzer(name="buzzer")
 
@@ -288,23 +253,23 @@ class FeedbackController:
         if uss is not None:
             self.uss = uss
         elif HARDWARE_AVAILABLE and UltrasonicSensor is not None:
-            self.uss = UltrasonicSensor(trigger=16, echo=17, name="uss")
+            self.uss = UltrasonicSensor(trigger=14, echo=15, name="uss")
         else:
             self.uss = SimUltrasonicSensor(name="uss")
 
         if green_button is not None:
             self.green_button = green_button
         elif HARDWARE_AVAILABLE and Button is not None:
-            self.green_button = Button(18, name="green")
+            self.green_button = Button(11, name="green")
         else:
-            self.green_button = SimButton(pin=18, name="green")
+            self.green_button = SimButton(pin=11, name="green")
 
         if red_button is not None:
             self.red_button = red_button
         elif HARDWARE_AVAILABLE and Button is not None:
-            self.red_button = Button(19, name="red")
+            self.red_button = Button(12, name="red")
         else:
-            self.red_button = SimButton(pin=19, name="red")
+            self.red_button = SimButton(pin=12, name="red")
         
         if manager_button is not None:
             self.manager_button = manager_button
@@ -349,7 +314,7 @@ class FeedbackController:
         self._model.addTransition(self.STATE_UNHAPPY, ["feedback_below_threshold"], self.STATE_ALARM)
         self._model.addTransition(self.STATE_UNHAPPY, ["timer_timeout"], self.STATE_WELCOME)
 
-        # 4 - Alarm: manager button resets system -> 0
+        # 4 - Alarm: manager reset on happy/green press -> 0
         self._model.addTransition(self.STATE_ALARM, ["manager_press"], self.STATE_WELCOME)
 
         Log.i("FeedbackController: Initialization complete with 5 states and transitions configured.")
@@ -455,14 +420,14 @@ class FeedbackController:
                 self.timer.start(5)
 
         elif state == self.STATE_UNHAPPY:
-            # 3 - unhappy: entry / display 'Sorry to hear that'; play sad tone; start 5 sec timer
+            # 3 - unhappy
             self.stats.add_unhappy()
-            self.show_lcd("Sorry to hear", "that")
             self.update_lights()
             self.play_sad_tone()
 
-            # Check if satisfaction percentage falls below threshold
             pct = self.stats.calculate_percentage()
+            self.show_lcd("Sorry to hear", f"Rating: {pct:.0f}%")
+
             if pct < self.satisfaction_threshold:
                 Log.i(f"FeedbackController: Satisfaction {pct:.1f}% is below threshold {self.satisfaction_threshold}%. Triggering Alarm!")
                 self._model.processEvent("feedback_below_threshold")
@@ -688,10 +653,10 @@ if __name__ == "__main__":
     Log.i("Test 2 Passed: Transition to State 1 (Selection) on uss_trip verified.")
 
     # 3. Customer presses green button (green_press -> State 2 Happy)
-    controller.processEvent("manager_press")
+    controller.processEvent("green_press")
     assert controller._model._curState == FeedbackController.STATE_HAPPY
     assert controller.stats.happy_count == 1
-    assert controller.statZ	s.unhappy_count == 0
+    assert controller.stats.unhappy_count == 0
     assert controller.display.lines == ["Thank you!", "Rating: 100%"]
     Log.i("Test 3 Passed: Transition to State 2 (happy) and stat recording verified.")
 
@@ -739,7 +704,7 @@ if __name__ == "__main__":
     Log.i("Test 8 Passed: 25% satisfaction triggers Alarm.")
 
     # 9. Manager arrives and presses green button -> resets stats and returns to State 0
-    controller.processEvent("green_press")
+    controller.processEvent("manager_press")
     assert controller._model._curState == FeedbackController.STATE_WELCOME
     assert controller.stats.happy_count == 0
     assert controller.stats.unhappy_count == 0
@@ -750,3 +715,5 @@ if __name__ == "__main__":
     controller.stop()
     assert controller._model._running is False
     Log.i("Testing complete - all checks passed")
+
+
